@@ -704,7 +704,7 @@ def main():
         result = {
             "output": output,
             "trajectory": trajectory,
-            "usage": _tracker.get_usage(),
+            "usage": (_tracker.get_usage() if _tracker else {}),
             "plugin_calls_raw": plugin_calls_raw,
             "taskweaver_session_id": session.session_id,
             "shadow_fallback": _shadow_fallback_flag["triggered"],
