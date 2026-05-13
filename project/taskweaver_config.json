@@ -1,0 +1,12 @@
+{
+  "llm.api_base": "https://coding.dashscope.aliyuncs.com/v1",
+  "llm.api_type": "openai",
+  "llm.api_key": "",
+  "llm.model": "qwen3.5-plus",
+  "execution_service.kernel_mode": "local",
+  "session.max_internal_chat_round_num": 50,
+  "planner.prompt_compression": true,
+  "code_generator.prompt_compression": true,
+  "round_compressor.rounds_to_compress": 2,
+  "round_compressor.rounds_to_retain": 3
+}
