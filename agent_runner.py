@@ -701,8 +701,47 @@ def main():
             )
         )
 
+        # ── Independent compress step (uses compress_sp + compress_up + v2 schema) ──
+        # TaskWeaver's Planner doesn't natively output v2 CausalGraph schema.
+        # Run a separate compress LLM call (same pattern as openrca/mabc/claudecode)
+        # so the final output conforms to v3 evaluation_v2 AgentRCAOutput format.
+        compress_sp = payload.get("compress_system_prompt", "")
+        compress_up = payload.get("compress_user_prompt", "")
+        compressed_output = output
+        if compress_sp and compress_up and trajectory:
+            try:
+                from openai import OpenAI
+                client = OpenAI(
+                    api_key=os.environ.get("UTU_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+                    base_url=os.environ.get("UTU_LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL"),
+                )
+                # Serialize the investigation trajectory as plain text for the compress call.
+                # Aligned with ThinkDepthAI upstream: pass FULL trajectory (no truncation).
+                # OpenAI/qwen 200K+ context windows handle this fine for typical runs.
+                inv_text = "\n\n".join(
+                    f"[{m.get('role', '?')}] {m.get('content') or ''}"
+                    for m in trajectory if m.get("role") in ("assistant", "tool")
+                )
+                resp = client.chat.completions.create(
+                    model=os.environ.get("UTU_LLM_MODEL", "qwen3.5-plus"),
+                    messages=[
+                        {"role": "system", "content": compress_sp},
+                        {"role": "user", "content": f"## Investigation\n\n{inv_text}\n\n---\n\n{compress_up}"},
+                    ],
+                    temperature=0.0,
+                )
+                compressed_output = strip_markdown_json(resp.choices[0].message.content or "")
+                # Validate it parses as JSON
+                try:
+                    json.loads(compressed_output)
+                except json.JSONDecodeError:
+                    logger.warning(f"[{_SAMPLE_TAG}] compress output not JSON, keeping Planner output")
+                    compressed_output = output
+            except Exception as e:
+                logger.warning(f"[{_SAMPLE_TAG}] compress step failed: {e}; using Planner output")
+
         result = {
-            "output": output,
+            "output": compressed_output,
             "trajectory": trajectory,
             "usage": (_tracker.get_usage() if _tracker else {}),
             "plugin_calls_raw": plugin_calls_raw,
