@@ -350,18 +350,38 @@ def build_planner_prompt_yaml(system_prompt: str) -> str:
     with open(upstream_path, "r") as f:
         prompt_data = yaml.safe_load(f)
 
-    # 只取调查指令部分（--- 分隔线之前），去掉 compress 触发器（"Output JSON NOW:"）
-    investigation_part = re.split(r'\n\s*---\s*\n', system_prompt, maxsplit=1)[0]
+    # 取整个 system_prompt（不再依赖 "---" 分隔，rca.yaml 实际无该分隔符）。
+    investigation_part = system_prompt
 
-    # 过滤 think_tool（TaskWeaver 无 think_tool，避免 LLM 尝试调用不存在的工具）
-    investigation_part = re.sub(r"  4\. \*\*think_tool\*\*.*\n", "", investigation_part)
-    investigation_part = investigation_part.replace("four tools", "three tools")
+    # 过滤 think_tool：TaskWeaver 框架不暴露 think_tool 工具给 Planner（Planner
+    # 用代码生成范式，无独立 think 工具）。匹配 rca.yaml 实际格式：
+    # `4. \`think_tool\` — REQUIRED after each query; ...`
+    # 之前的 regex `\*\*think_tool\*\*` 完全匹配不上 (yaml 用 backtick 不是 **)。
+    investigation_part = re.sub(
+        r"^\s*\d+\.\s*`think_tool`.*$",
+        "",
+        investigation_part,
+        flags=re.MULTILINE,
+    )
+    # 同时 Investigation playbook 里如果有 "think_tool" 字样也清理
+    investigation_part = re.sub(r"`think_tool`", "(no think_tool in TaskWeaver)", investigation_part)
 
     # 转义 { } → {{ }}（防止 .format() 解析出错）
     escaped_sp = investigation_part.replace("{", "{{").replace("}", "}}")
 
+    # 注入 v2 schema (agent_contract) 到 instruction_template 末尾，让 Planner 知道
+    # 最终输出格式。即使有独立 compress 步骤兜底，给 Planner 看到 schema 能让它
+    # 自己组织调查 + 输出时更对齐 v2 期望（root_causes + propagation + fault_kind）。
+    try:
+        from rcabench_platform.v3.sdk.evaluation.v2 import get_agent_contract_prompt
+        agent_contract_text = get_agent_contract_prompt()
+    except Exception:
+        agent_contract_text = ""
+    escaped_contract = agent_contract_text.replace("{", "{{").replace("}", "}}") if agent_contract_text else ""
+
     prompt_data["instruction_template"] += (
         f"\n\n  ## RCA Analysis Instructions\n\n{escaped_sp}"
+        + (f"\n\n  ## Output Requirements (v2 schema)\n\n{escaped_contract}\n" if escaped_contract else "")
         + _FINAL_ANSWER_FORMAT
     )
 
